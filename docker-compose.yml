@@ -1,0 +1,97 @@
+version: "3.8"
+
+services:
+  es01:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    container_name: es01
+    environment:
+      - node.name=es01
+      - cluster.name=es-docker-cluster
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=${STACK_PASSWORD}
+      - "ES_JAVA_OPTS=-Xms2g -Xmx2g"
+      # Security & SSL Settings
+      - xpack.security.enabled=true
+      - xpack.security.enrollment.enabled=true
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.key=/usr/share/elasticsearch/config/certs/instance/instance.key
+      - xpack.security.http.ssl.certificate=/usr/share/elasticsearch/config/certs/instance/instance.crt
+      - xpack.security.http.ssl.certificate_authorities=/usr/share/elasticsearch/config/certs/ca/ca.crt
+      - xpack.security.transport.ssl.enabled=true # Required for Fleet
+      - xpack.security.transport.ssl.key=/usr/share/elasticsearch/config/certs/instance/instance.key
+      - xpack.security.transport.ssl.certificate=/usr/share/elasticsearch/config/certs/instance/instance.crt
+      - xpack.security.transport.ssl.certificate_authorities=/usr/share/elasticsearch/config/certs/ca/ca.crt
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+      - ./certs:/usr/share/elasticsearch/config/certs # <--- Mounts the certs
+    ports:
+      - "9200:9200"
+    networks:
+      - elastic
+    mem_limit: 4g
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - XPACK_FLEET_AGENTS_ENABLED=true
+      - SERVERNAME=kibana
+      - ELASTICSEARCH_HOSTS=${ELASTIC_HOST} # <--- Changed to HTTPS
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${STACK_PASSWORD}
+      - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=/usr/share/kibana/config/certs/ca/ca.crt
+      # Encryption keys for Fleet (Generate random strings for these in prod)
+      # IN PROD: Use 'openssl rand -hex 32' to generate these
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=d1a665977508479389531584933909a8
+      - XPACK_REPORTING_ENCRYPTIONKEY=d1a665977508479389531584933909a8
+      - XPACK_SECURITY_ENCRYPTIONKEY=d1a665977508479389531584933909a8
+    volumes:
+      - ./certs:/usr/share/kibana/config/certs
+    networks:
+      - elastic
+    depends_on:
+      - es01
+    mem_limit: 2g
+
+  fleet-server:
+    image: docker.elastic.co/elastic-agent/elastic-agent:${STACK_VERSION}
+    container_name: fleet-server
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -k https://localhost:8220/api/status | grep -q 'HEALTHY'"]
+      retries: 300
+      interval: 5s
+      start_period: 3m
+    environment:
+      - FLEET_SERVER_ELASTICSEARCH_INSECURE=true
+      - FLEET_SERVER_ENABLE=1
+      - FLEET_SERVER_POLICY_ID=fleet-server-policy
+      - FLEET_URL=https://fleet-server:8220
+      - FLEET_SERVER_SERVICE_TOKEN=${FLEET_TOKEN}
+      - ELASTICSEARCH_HOST=${ELASTIC_HOST}
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=${STACK_PASSWORD}
+      - ELASTICSEARCH_CA=/usr/share/elastic-agent/certs/ca/ca.crt
+      - FLEET_SERVER_ELASTICSEARCH_HOST=${ELASTIC_HOST}
+      - FLEET_SERVER_ELASTICSEARCH_CA=/usr/share/elastic-agent/certs/ca/ca.crt
+      - FLEET_SERVER_CERT=/usr/share/elastic-agent/certs/instance/instance.crt
+      - FLEET_SERVER_CERT_KEY=/usr/share/elastic-agent/certs/instance/instance.key
+    ports:
+      - "8220:8220"
+    volumes:
+      - ./certs:/usr/share/elastic-agent/certs
+    networks:
+      - elastic
+    depends_on:
+      - es01
+      - kibana
+    mem_limit: 1g
+
+volumes:
+  es_data:
+    driver: local
+
+networks:
+  elastic:
+    driver: bridge
