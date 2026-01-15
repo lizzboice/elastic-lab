@@ -17,10 +17,11 @@ We cannot start the stack without encryption keys. We will use a temporary conta
 
 2. Generate the Certificates:  
    Run this "one-off" command to create the keys.  
-   Note: We explicitly add fleet-server and es01 to the DNS list.  
+   Note: We explicitly add fleet-server and es01 to the DNS list.
+   ```
    docker run --rm -v $(pwd)/certs:/certs docker.elastic.co/elasticsearch/elasticsearch:9.2.2 /usr/share/elasticsearch/bin/elasticsearch-certutil cert --silent --pem --keep-ca-key --dns es01 --dns kibana --dns fleet-server --dns localhost --ip 127.0.0.1 -out /certs/certs.zip
    ```
-3. Unzip and Fix Permissions:  
+4. Unzip and Fix Permissions:  
    Elasticsearch runs as user 1000. We must ensure it can read these files.  
    ```
    unzip certs/certs.zip -d certs  
