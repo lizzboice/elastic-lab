@@ -1,3 +1,7 @@
+# About
+This repository contains instructions and example files to set up an Elastic stack in your homelab.  These are the configs I used in the RISE demo.  Use these configs and instructions at your own risk.  Always follow the latest hardening guidelines from Elastic and be very careful if you expose this to the internet!
+
+# Walkthrough
 **Prerequisites**
 
 * **Docker & Docker Compose** installed.  
@@ -13,21 +17,24 @@ We cannot start the stack without encryption keys. We will use a temporary conta
    ```
    mkdir elastic-lab && cd elastic-lab  
    mkdir certs
+   sudo chown -R 1000:0 certs
    ```
 
-2. Generate the Certificates:  
-   Run this "one-off" command to create the keys.  
-   Note: We explicitly add fleet-server and es01 to the DNS list.
+2. Generate the CA:  
+  `docker run --rm -v $(pwd)/certs:/certs docker.elastic.co/elasticsearch/elasticsearch:9.2.4 /usr/share/elasticsearch/bin/elasticsearch-certutil ca --silent --pem -out /certs/ca.zip`
+
+3. Unzip the certs
+  `unzip certs/ca.zip -d certs`
+
+4. Generate the certs:
+   ```bash
+   docker run --rm -v $(pwd)/certs:/certs docker.elastic.co/elasticsearch/elasticsearch:9.2.4 /usr/share/elasticsearch/bin/elasticsearch-certutil cert --silent --pem --ca-cert /certs/ca/ca.crt --ca-key /certs/ca/ca.key --dns es01 --dns kibana --dns fleet-server --dns localhost --ip 127.0.0.1 -out /certs/certs.zip
    ```
-   docker run --rm -v $(pwd)/certs:/certs docker.elastic.co/elasticsearch/elasticsearch:9.2.2 /usr/share/elasticsearch/bin/elasticsearch-certutil cert --silent --pem --keep-ca-key --dns es01 --dns kibana --dns fleet-server --dns localhost --ip 127.0.0.1 -out /certs/certs.zip
+
+5. Unzip and Fix Permissions:  
    ```
-4. Unzip and Fix Permissions:  
-   Elasticsearch runs as user 1000. We must ensure it can read these files.  
-   ```
-   unzip certs/certs.zip -d certs  
-   # Crucial: Allow user 1000 to read the keys  
-   sudo chown -R 1000:0 certs  
-   sudo chmod -R 755 certs
+    unzip certs/certs.zip -d certs 
+    sudo chown -R 1000:0 certs
    ```
 
    *Result: You should now have `certs/ca/ca.crt` and `certs/instance/instance.crt.`*
@@ -44,7 +51,7 @@ We cannot start the stack without encryption keys. We will use a temporary conta
 
 2. Edit `.env` and set your variables:
    ```ini
-   STACK_VERSION=9.2.2
+   STACK_VERSION=9.2.4
    STACK_PASSWORD=changeme123       # Set your superuser password here
    ELASTIC_HOST=https://es01:9200   # Internal Docker host
    FLEET_TOKEN=<Generated_Later>    # We will fill this in Phase 3
@@ -55,7 +62,6 @@ We cannot start the stack without encryption keys. We will use a temporary conta
 *Start with just ES and Kibana to establish the database.*
 
 ```
-version: "3.8"
 
 services:  
   es01:  
@@ -97,7 +103,7 @@ services:
       - ELASTICSEARCH_USERNAME=kibana_system  
       - ELASTICSEARCH_PASSWORD=${STACK_PASSWORD}  
       - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=/usr/share/kibana/config/certs/ca/ca.crt  
-      \# Encryption Keys (Generate random strings for Prod\!)  
+      # Encryption Keys (Generate random strings for Prod!)  
       - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=d1a665977508479389531584933909a8  
       - XPACK_REPORTING_ENCRYPTIONKEY=d1a665977508479389531584933909a8  
       - XPACK_SECURITY_ENCRYPTIONKEY=d1a665977508479389531584933909a8  
@@ -125,7 +131,12 @@ networks:
 
 2. **Set the kibana_system Password:**  
    Wait 30s for ES to boot, then run:  
-   `docker exec -it es01 /usr/share/elasticsearch/bin/elasticsearch-reset-password -u kibana_system -i`
+   ```
+    docker exec -it es01 /usr/share/elasticsearch/bin/elasticsearch-reset-password \
+    -u kibana_system \
+    -i \
+    --url https://localhost:9200
+   ```
 
    *(Enter the STACK_PASSWORD you put in your .env file)*  
 3. **Start Kibana:**  
@@ -136,8 +147,6 @@ networks:
 
 
 **Phase 3: The Fleet Server**
-
-*We avoid the "Auto-Setup" scripts because they often timeout on lab hardware. We will generate the token manually.*
 
 1. **Generate Service Token:**  
    * In Kibana: **Management** -> **Fleet** -> **Add Fleet Server**.  
@@ -156,7 +165,7 @@ networks:
       # 1. The Token (Crucial to avoid timeouts)  
       - FLEET_SERVER_SERVICE_TOKEN=${FLEET_TOKEN}  
         
-      \# 2\. The "Homelab Cheat" (Trust self-signed ES certs)  
+      # 2. The "Homelab Cheat" (Trust self-signed ES certs)  
       - FLEET_SERVER_ELASTICSEARCH_INSECURE=true  
         
       \# Standard Configs  
@@ -221,7 +230,7 @@ sudo ./elastic-agent install \
 
 > **SECURITY WARNING:** We are using `--insecure` and `ssl.verification_mode: none` because we are using self-signed certificates generated in Phase 1. In a production environment, you should use a proper PKI infrastructure and verify certificates to prevent Man-in-the-Middle (MITM) attacks.
 
-**Troubleshooting Cheat Sheet**
+# Troubleshooting Cheat Sheet
 
 | Symptom | Cause | Fix |
 | :---- | :---- | :---- |
